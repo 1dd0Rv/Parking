@@ -1,0 +1,73 @@
+# ============================================================
+# PostgreSQL dentro del cluster
+# ============================================================
+# Secret: credenciales compartidas por Postgres y la app
+apiVersion: v1
+kind: Secret
+metadata:
+  name: parking-db
+type: Opaque
+stringData:
+  POSTGRES_DB: db_parking
+  POSTGRES_USER: root
+  POSTGRES_PASSWORD: springboot123
+---
+# Volumen persistente: para que los datos sobrevivan a reinicios del pod
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: parking-db
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "db_parking"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+# Service: DNS interno "postgres" que usará la app
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

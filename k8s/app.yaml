@@ -1,0 +1,89 @@
+# ============================================================
+# Aplicacion Spring Boot Parking
+# ============================================================
+# ConfigMap: configuracion NO sensible de la app (la URL de la BD).
+# Se saca del manifiesto del Deployment para no embeberla.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parking-config
+data:
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/db_parking
+---
+# Secret: clave HS256 compartida para firmar/validar los JWT.
+# Debe ser la MISMA en todas las replicas y estable entre reinicios; si no,
+# un token firmado por un pod falla la validacion en otro (401 aleatorios).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: parking-jwt
+type: Opaque
+stringData:
+  # Valor base64 (el codigo hace Decoders.BASE64.decode). Generado con: openssl rand -base64 32
+  JWT_SECRET: qw3aXxUL1aYzXjdEI+ff0KD4dbHc4sLrf2dXHmKD/4g=
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parking
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: parking
+  template:
+    metadata:
+      labels:
+        app: parking
+    spec:
+      # Espera a que Postgres acepte conexiones antes de arrancar Spring Boot
+      initContainers:
+        - name: wait-for-db
+          image: postgres:16
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -p 5432 -U root; do
+                echo "Esperando a Postgres..."; sleep 2;
+              done
+      containers:
+        - name: parking
+          image: parking:1.0
+          imagePullPolicy: IfNotPresent   # usa la imagen local de minikube
+          ports:
+            - containerPort: 8080
+          env:
+            # Sobrescriben application.properties (relaxed binding de Spring)
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: parking-config
+                  key: SPRING_DATASOURCE_URL
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: parking-db
+                  key: POSTGRES_USER
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: parking-db
+                  key: POSTGRES_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: parking-jwt
+                  key: JWT_SECRET
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: parking
+spec:
+  type: NodePort
+  selector:
+    app: parking
+  ports:
+    - port: 8080
+      targetPort: 8080
